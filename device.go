@@ -280,6 +280,16 @@ func (d *Device) connect() error {
 }
 
 func (d *Device) startBackgroundRead() {
+	// Mark the conn as background-read-driven *before* launching the
+	// goroutine. RoundTrip inspects this flag to decide whether to
+	// read responses synchronously (its own bufio.Reader over the
+	// conn) or to wait on the loop's response channel. If the caller
+	// fires a request before the goroutine has had a chance to set
+	// the flag itself, RoundTrip would mistakenly start a second
+	// reader on the same encrypted conn — and bufio is not safe for
+	// concurrent reads, so frame plaintext would be split between the
+	// two consumers and the response stream would scramble.
+	d.cc.inBackground = true
 	go func() {
 		d.cc.loop()
 		log.Debug.Println("background read: loop stopped")
