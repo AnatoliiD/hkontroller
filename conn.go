@@ -248,17 +248,9 @@ func (c *conn) Read(b []byte) (int, error) {
 		if err == io.EOF {
 			c.readBuf = nil
 			if n > 0 {
-				log.Debug.Printf("conn.Read: returned %d bytes (eof, partial frame): %q", n, string(b[:n]))
 				return n, nil
 			}
 			continue
-		}
-		if n > 0 {
-			preview := b[:n]
-			if n > 96 {
-				preview = b[:96]
-			}
-			log.Debug.Printf("conn.Read: returned %d bytes: %q", n, string(preview))
 		}
 		return n, err
 	}
