@@ -214,6 +214,13 @@ const (
 
 // Read reads bytes from the connection.
 // The read bytes are decrypted when possible.
+//
+// HAP frames carry up to 1024 bytes of plaintext each, with no
+// alignment to logical HTTP messages. The plaintext stream is the
+// concatenation of every frame's payload in order, so when one
+// frame's plaintext is exhausted Read transparently decrypts the next
+// frame and keeps serving the same logical Read call. EOF is returned
+// only when the underlying connection closes.
 func (c *conn) Read(b []byte) (int, error) {
 	if c.ss == nil {
 		n, err := c.Conn.Read(b)
@@ -226,23 +233,43 @@ func (c *conn) Read(b []byte) (int, error) {
 	if c.bufReader == nil {
 		c.bufReader = bufio.NewReader(c.Conn)
 	}
-	if c.readBuf == nil {
-		buf, err := c.ss.Decrypt(c.bufReader)
-		if err != nil {
-			c.close()
-			return 0, err
+
+	for {
+		if c.readBuf == nil {
+			buf, err := c.ss.Decrypt(c.bufReader)
+			if err != nil {
+				c.close()
+				return 0, err
+			}
+			c.readBuf = buf
 		}
 
-		c.readBuf = buf
+		n, err := c.readBuf.Read(b)
+		if err == io.EOF {
+			c.readBuf = nil
+			if n > 0 {
+				return n, nil
+			}
+			continue
+		}
+		return n, err
 	}
+}
 
-	n, err := c.readBuf.Read(b)
+// sendResp / sendErr deliver to the per-RoundTrip response channel
+// while tolerating the inherent race with RoundTrip's deferred
+// close(): when the request context is cancelled, RoundTrip closes
+// the channel before the loop has a chance to observe wantResponse=
+// false. The recover keeps the read loop alive instead of taking the
+// whole process down with "send on closed channel".
+func sendResp(ch chan<- *http.Response, res *http.Response) {
+	defer func() { _ = recover() }()
+	ch <- res
+}
 
-	if n < len(b) || err == io.EOF {
-		c.readBuf = nil
-	}
-
-	return n, err
+func sendErr(ch chan<- error, err error) {
+	defer func() { _ = recover() }()
+	ch <- err
 }
 
 func (c *conn) loop() {
@@ -291,7 +318,7 @@ func (c *conn) loop() {
 			if err != nil {
 				log.Debug.Println("response error: ", err)
 				if c.wantResponse {
-					c.resError <- err
+					sendErr(c.resError, err)
 				}
 				continue
 			}
@@ -307,7 +334,7 @@ func (c *conn) loop() {
 			if err != nil {
 				log.Debug.Println("response body read error: ", err)
 				if c.wantResponse {
-					c.resError <- err
+					sendErr(c.resError, err)
 				}
 				continue
 			}
@@ -316,7 +343,7 @@ func (c *conn) loop() {
 			res.Body = io.NopCloser(bytes.NewReader(all))
 
 			if c.wantResponse {
-				c.response <- res
+				sendResp(c.response, res)
 			}
 		}
 	}
