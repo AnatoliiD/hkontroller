@@ -322,6 +322,8 @@ func (c *conn) loop() {
 				}
 				continue
 			}
+			log.Debug.Printf("response head: %s, status=%d, te=%v, cl=%d",
+				res.Proto, res.StatusCode, res.TransferEncoding, res.ContentLength)
 			//dump, err := httputil.DumpResponse(res, false)
 			//fmt.Println(string(dump), err)
 

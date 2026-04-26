@@ -3,9 +3,11 @@ package hkontroller
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"github.com/hkontrol/hkontroller/chacha20poly1305"
 	"github.com/hkontrol/hkontroller/hkdf"
+	"github.com/hkontrol/hkontroller/log"
 	"io"
 	"sync"
 )
@@ -113,6 +115,13 @@ func (s *session) Decrypt(r io.Reader) (io.Reader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("data encryption failed: %w", err)
 	}
+
+	preview := decrypted
+	if len(preview) > 64 {
+		preview = preview[:64]
+	}
+	log.Debug.Printf("decrypt frame: len=%d count=%d preview=%q hex=%s",
+		length, s.decryptCount-1, string(preview), hex.EncodeToString(preview))
 
 	return bytes.NewReader(decrypted), nil
 }
